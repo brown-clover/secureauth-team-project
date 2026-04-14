@@ -1,6 +1,5 @@
 import jwt from 'jsonwebtoken';
 import db from '../config/db.js';
-import { completeLoginAfter2FA } from '../services/auth.service.js';
 
 import { registerUser, loginUser } from '../services/auth.service.js';
 

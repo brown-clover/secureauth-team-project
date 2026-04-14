@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import db from '../config/db.js';
+import speakeasy from 'speakeasy';
 
 export const registerUser = async ({ email, password }) => {
   const [rows] = await db.query(
@@ -14,17 +15,24 @@ export const registerUser = async ({ email, password }) => {
 
   const password_hash = await bcrypt.hash(password, 10);
 
+  // 🔐 generate temp secret (for setup)
+  const secret = speakeasy.generateSecret({ length: 20 });
+
   const [result] = await db.query(
-    `INSERT INTO users (email, password_hash, totp_secret, twofa_enabled)
-     VALUES (?, ?, ?, ?)`,
-    [email, password_hash, '', false]
+    `INSERT INTO users (email, password_hash, totp_secret, twofa_enabled, temp_2fa_secret)
+     VALUES (?, ?, ?, ?, ?)`,
+    [email, password_hash, '', false, secret.base32]
   );
 
   return {
     id: result.insertId,
     email,
+    otpauth_url: secret.otpauth_url
   };
 };
+
+
+
 
 
 export const loginUser = async ({ email, password }) => {
@@ -33,19 +41,13 @@ export const loginUser = async ({ email, password }) => {
     [email]
   );
 
-  if (rows.length === 0) {
-    throw new Error('Invalid credentials');
-  }
+  if (rows.length === 0) throw new Error('Invalid credentials');
 
   const user = rows[0];
 
   const isMatch = await bcrypt.compare(password, user.password_hash);
+  if (!isMatch) throw new Error('Invalid credentials');
 
-  if (!isMatch) {
-    throw new Error('Invalid credentials');
-  }
-
-  // 🔐 IF 2FA ENABLED → STOP HERE
   if (user.twofa_enabled) {
     const tempToken = jwt.sign(
       { id: user.id, email: user.email, temp: true },
@@ -55,12 +57,10 @@ export const loginUser = async ({ email, password }) => {
 
     return {
       requires_2fa: true,
-      tempToken,
-      message: 'OTP verification required'
+      tempToken
     };
   }
 
-  // ✅ ONLY users WITHOUT 2FA get full token
   const token = jwt.sign(
     { id: user.id, email: user.email },
     process.env.JWT_SECRET,
@@ -71,12 +71,3 @@ export const loginUser = async ({ email, password }) => {
 };
 
 
-export const completeLoginAfter2FA = async (user) => {
-  const token = jwt.sign(
-    { id: user.id, email: user.email },
-    process.env.JWT_SECRET,
-    { expiresIn: '1h' }
-  );
-
-  return { token };
-};
